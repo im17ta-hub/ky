@@ -22,11 +22,40 @@ export default function App() {
         return;
       }
       setImage(file);
+      
       const reader = new FileReader();
       reader.onloadend = () => {
-        setImagePreview(reader.result);
+        // 画像を自動で縮小（圧縮）してサーバーの負担を減らす処理
+        const img = new Image();
+        img.onload = () => {
+          const canvas = document.createElement('canvas');
+          let width = img.width;
+          let height = img.height;
+          const maxSize = 800; // 最大800pxに縮小して通信を安定させる
+
+          if (width > height) {
+            if (width > maxSize) {
+              height *= maxSize / width;
+              width = maxSize;
+            }
+          } else {
+            if (height > maxSize) {
+              width *= maxSize / height;
+              height = maxSize;
+            }
+          }
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+          
+          // 圧縮した画像をセット (JPEG形式に変換して容量を劇的に減らす)
+          setImagePreview(canvas.toDataURL('image/jpeg', 0.8));
+        };
+        img.src = reader.result;
       };
       reader.readAsDataURL(file);
+      
       setResult(null);
       setError('');
       setImportantHazardIndex(null);
@@ -72,7 +101,7 @@ export default function App() {
         body: JSON.stringify({ 
           base64Data, 
           userComment,
-          mimeType: image.type
+          mimeType: 'image/jpeg' // 圧縮処理でJPEGに変換しているため変更
         })
       });
 
@@ -99,8 +128,7 @@ export default function App() {
   const getSymbol = (val) => val === 3 ? '×' : val === 2 ? '△' : '○';
 
   const getHazardIcon = (title) => {
-    
-if (title.includes('墜落') || title.includes('転落') || title.includes('落下')) return <AlertTriangle className="w-16 h-16 print:w-12 print:h-12 text-orange-500 print:text-black" />;
+    if (title.includes('墜落') || title.includes('転落') || title.includes('落下')) return <AlertTriangle className="w-16 h-16 print:w-12 print:h-12 text-orange-500 print:text-black" />;
     if (title.includes('感電')) return <Zap className="w-16 h-16 print:w-12 print:h-12 text-yellow-500 print:text-black" />;
     if (title.includes('火災') || title.includes('火傷') || title.includes('爆発')) return <Flame className="w-16 h-16 print:w-12 print:h-12 text-red-500 print:text-black" />;
     if (title.includes('重機') || title.includes('車両') || title.includes('交通') || title.includes('はさまれ')) return <Car className="w-16 h-16 print:w-12 print:h-12 text-blue-500 print:text-black" />;
@@ -108,6 +136,53 @@ if (title.includes('墜落') || title.includes('転落') || title.includes('落�
     if (title.includes('酸欠') || title.includes('有毒') || title.includes('中毒')) return <Skull className="w-16 h-16 print:w-12 print:h-12 text-purple-500 print:text-black" />;
     if (title.includes('倒壊') || title.includes('崩壊')) return <Construction className="w-16 h-16 print:w-12 print:h-12 text-amber-600 print:text-black" />;
     return <ShieldAlert className="w-16 h-16 print:w-12 print:h-12 text-red-600 print:text-black" />;
+  };
+
+  const handlePrint = () => {
+    try {
+      window.focus();
+      window.print();
+    } catch (err) {
+      console.error("印刷機能の呼び出しに失敗しました", err);
+    }
+    setShowPrintHint(true);
+    setTimeout(() => setShowPrintHint(false), 8000);
+  };
+
+  const handleCopy = () => {
+    if (!result) return;
+    
+    let textToCopy = `【本日の安全行動目標】\n${result.safetyGoal}\n\n`;
+    textToCopy += `【KY抽出結果】\n`;
+    
+    result.hazards.forEach((hazard, index) => {
+      const riskLevel = hazard.severity + hazard.likelihood - 1;
+      textToCopy += `\nNo.${index + 1} ${hazard.title}\n`;
+      textToCopy += `・危険ポイント: ${hazard.situation}\n`;
+      textToCopy += `・対策 (私達はこうする!): ${hazard.countermeasure}\n`;
+      textToCopy += `・リスク度: ${riskLevel} (重大性:${hazard.severity}, 可能性:${hazard.likelihood})\n`;
+    });
+
+    try {
+      const textArea = document.createElement("textarea");
+      textArea.value = textToCopy;
+      textArea.style.position = "fixed";
+      textArea.style.left = "-999999px";
+      textArea.style.top = "-999999px";
+      document.body.appendChild(textArea);
+      textArea.focus();
+      textArea.select();
+      document.execCommand('copy');
+      textArea.remove();
+      
+      setIsCopied(true);
+      setTimeout(() => setIsCopied(false), 2000);
+    } catch (err) {
+      console.error('コピーに失敗しました', err);
+    }
+  };
+
+  return (
     <div className="min-h-screen bg-slate-100 font-sans pb-12 print:bg-white print:pb-0 print:text-black">
       <style>{`
         @media print {
@@ -119,6 +194,102 @@ if (title.includes('墜落') || title.includes('転落') || title.includes('落�
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
             font-size: 11pt; /* 小さすぎない適切な文字サイズに調整 */
+          }
+          /* ページ分割を防ぐ */
+          .print-avoid-break {
+            page-break-inside: avoid;
+            break-inside: avoid;
+          }
+        }
+      `}</style>
+      
+      <header className="bg-blue-800 text-white p-4 shadow-md flex items-center justify-center gap-3 print:hidden">
+        <AlertTriangle className="w-8 h-8 text-yellow-400" />
+        <h1 className="text-2xl md:text-3xl font-bold tracking-wider">TBM・RKY 支援サポーター</h1>
+      </header>
+
+      <main className="max-w-4xl mx-auto p-4 mt-6 print:m-0 print:p-0 print:max-w-none">
+        
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 mb-6 print:hidden">
+          <h2 className="text-xl font-bold mb-4 text-slate-800 flex items-center gap-2">
+            <ImageIcon className="w-6 h-6 text-blue-500" />
+            1. 現場の写真をアップロード
+          </h2>
+          
+          <div 
+            className={`border-2 border-dashed rounded-lg p-8 text-center cursor-pointer transition-colors
+              ${isDragging ? 'border-blue-500 bg-blue-50' : 'border-slate-300 hover:bg-slate-50'}`}
+            onClick={() => fileInputRef.current?.click()}
+            onDragOver={handleDragOver}
+            onDragLeave={handleDragLeave}
+            onDrop={handleDrop}
+          >
+            <input 
+              type="file" 
+              ref={fileInputRef} 
+              onChange={handleImageUpload} 
+              accept="image/*" 
+              className="hidden" 
+            />
+            {imagePreview ? (
+              <img src={imagePreview} alt="Preview" className="max-h-64 mx-auto rounded-md object-contain pointer-events-none" />
+            ) : (
+              <div className="flex flex-col items-center justify-center text-slate-500 pointer-events-none">
+                <UploadCloud className={`w-16 h-16 mb-4 ${isDragging ? 'text-blue-500' : 'text-slate-400'}`} />
+                <p className="text-lg font-medium">ここをタップするか、画像をドラッグ＆ドロップ</p>
+                <p className="text-sm mt-2">※スマホのカメラで直接撮影も可能です</p>
+              </div>
+            )}
+          </div>
+
+          {imagePreview && (
+            <div className="mt-6 space-y-5 text-center">
+              <div className="text-left bg-slate-50 p-4 rounded-lg border border-slate-200 animate-fade-in">
+                <label htmlFor="userComment" className="block text-sm font-bold text-slate-700 mb-2">
+                  <span className="bg-blue-100 text-blue-800 text-xs px-2 py-1 rounded mr-2">任意</span>
+                  AIに特にチェックしてほしい点や、当日の作業内容、気になる箇所があれば入力してください
+                </label>
+                <textarea
+                  id="userComment"
+                  value={userComment}
+                  onChange={(e) => setUserComment(e.target.value)}
+                  placeholder="例：写真の左奥、資材が積んである部分が崩れないか気になるので念入りに見てほしい。"
+                  className="w-full p-3 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none transition-shadow"
+                  rows="3"
+                ></textarea>
+              </div>
+
+              <button 
+                onClick={analyzeImage} 
+                disabled={isAnalyzing} 
+                className="w-full md:w-auto px-8 py-4 rounded-lg font-bold text-xl text-white bg-blue-600 hover:bg-blue-700 mx-auto flex justify-center gap-2"
+              >
+                {isAnalyzing ? (
+                  <><Loader2 className="w-6 h-6 animate-spin" />分析中...</>
+                ) : (
+                  <><CheckCircle className="w-6 h-6" />危険予知（KY）を実行</>
+                )}
+              </button>
+            </div>
+          )}
+          {error && <div className="mt-4 p-4 bg-red-50 text-red-700 rounded-md">{error}</div>}
+        </div>
+
+        {result && (
+          <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 print:border-none print:shadow-none print:p-0">
+            
+            <div className="flex justify-end gap-3 mb-6 print:hidden pb-4">
+              <button onClick={handleCopy} className="flex items-center gap-2 px-4 py-2 bg-slate-100 font-bold rounded-lg hover:bg-slate-200 transition-colors">
+                {isCopied ? <Check className="w-5 h-5 text-green-600"/> : <Copy className="w-5 h-5"/>}
+                コピー
+              </button>
+              <button onClick={handlePrint} className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white font-bold rounded-lg hover:bg-blue-700 transition-colors">
+                <Printer className="w-5 h-5"/>
+                印刷・PDF
+              </button>
+            </div>
+
+            <div className="hidden print:block mb-4">
               <h2 className="text-xl font-bold text-slate-800 border-b-2 border-slate-800 pb-1">TBM・リスクアセスメントKY AI分析結果</h2>
               <p className="text-xs text-slate-600 text-right mt-1">出力日時: {new Date().toLocaleString('ja-JP')}</p>
             </div>
